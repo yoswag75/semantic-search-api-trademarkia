@@ -1,0 +1,19 @@
+Environments
+
+venv/
+env/
+.venv/
+
+Machine Learning Models and Data (Too large for GitHub)
+
+.artifacts/
+
+Python Cache
+
+pycache/
+*.pyc
+*.pyo
+
+OS generated files
+
+.DS_Store

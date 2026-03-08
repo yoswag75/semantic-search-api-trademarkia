@@ -1,0 +1,13 @@
+services:
+  semantic-search-api:
+    build: .
+    container_name: semantic-search-container
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount the artifacts directory so the ML models and FAISS index 
+      # persist across container restarts. This saves 2-5 minutes of startup time!
+      - ./.artifacts:/app/.artifacts
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped

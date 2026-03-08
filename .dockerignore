@@ -1,0 +1,19 @@
+Python virtual environments
+
+venv/
+.venv/
+env/
+
+Python cache files
+
+pycache/
+*.pyc
+*.pyo
+
+Ignore ML models and data
+
+.artifacts/
+
+Git
+
+.git/

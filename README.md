@@ -306,9 +306,3 @@ to reuse the same cached result.
 This demonstrates how vector search systems can integrate with
 intelligent caching strategies to build efficient semantic
 infrastructure.
-
-------------------------------------------------------------------------
-
-# License
-
-MIT

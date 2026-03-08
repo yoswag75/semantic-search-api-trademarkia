@@ -1,646 +1,314 @@
-```markdown
 # Semantic Search + Cluster-Aware Semantic Cache API
 
-A **high-performance semantic search and intelligent semantic caching system** built from first principles using **FastAPI**, **FAISS**, and **probabilistic clustering**.  
+A high‑performance semantic search and intelligent semantic caching
+system built from first principles using FastAPI, FAISS, and
+probabilistic clustering.
 
-This system demonstrates how **vector search infrastructure**, **latent semantic clustering**, and **cache-aware routing algorithms** can be combined to build an efficient **semantic retrieval layer** without relying on external caching systems such as Redis or Memcached.
+This system demonstrates how vector search infrastructure, latent
+semantic clustering, and cache-aware routing algorithms can be combined
+to build an efficient semantic retrieval layer without relying on
+external caching systems such as Redis or Memcached.
 
-The repository is designed as a **systems-level demonstration of scalable semantic infrastructure**, focusing on:
-
-- Algorithmic efficiency
-- Architecture design
-- Statistical modeling of text corpora
-- Intelligent caching strategies
-
----
+------------------------------------------------------------------------
 
 # System Architecture
 
-The system is composed of **three tightly integrated subsystems**:
+Client Query │ ▼ FastAPI Router │ ▼ Query Embedding
+(SentenceTransformers) │ ▼ Cluster Inference (PCA + GMM) │ ▼
+Cluster‑Aware Semantic Cache │ ┌────┴───────────┐ │ │ Cache Hit Cache
+Miss │ │ ▼ ▼ Return Result FAISS Vector Search │ ▼ Retrieve Document │ ▼
+Cache Store
 
-```
+The architecture separates responsibilities across three layers:
 
-```
-            ┌─────────────────────────────┐
-            │        Client Query         │
-            └──────────────┬──────────────┘
-                           │
-                           ▼
-                ┌────────────────────┐
-                │   FastAPI Router   │
-                └─────────┬──────────┘
-                          │
-                          ▼
-           ┌───────────────────────────┐
-           │ Query Embedding Generator │
-           │ SentenceTransformer       │
-           └─────────┬─────────────────┘
-                     │
-                     ▼
-      ┌──────────────────────────────────────┐
-      │ Cluster Inference (PCA + GMM Model)  │
-      │ Returns probability distribution     │
-      └─────────────┬────────────────────────┘
-                    │
-                    ▼
-  ┌─────────────────────────────────────────────┐
-  │        Cluster-Aware Semantic Cache         │
-  │                                             │
-  │ Buckets grouped by dominant cluster IDs     │
-  │ Only scans buckets where P(cluster) > 0.1   │
-  └─────────────┬───────────────────────────────┘
-                │
-     Cache Hit  │  Cache Miss
-                ▼
-        ┌───────────────┐
-        │ Return Result │
-        └───────▲───────┘
-                │
-                ▼
-      ┌─────────────────────┐
-      │ FAISS Vector Search │
-      │ Cosine Similarity   │
-      └─────────┬───────────┘
-                │
-                ▼
-      ┌─────────────────────┐
-      │ Retrieve Document   │
-      │ Store in Cache     │
-      └─────────────────────┘
-```
+Vector Engine -- Semantic representation and nearest neighbor retrieval\
+Clustering Engine -- Latent topic discovery using probabilistic
+modeling\
+Semantic Cache -- Query-level caching optimized with cluster-aware
+routing
 
-```
-
-The architecture separates concerns across three layers:
-
-| Layer | Responsibility |
-|-----|-----|
-| **Vector Engine** | Semantic representation + nearest neighbor retrieval |
-| **Clustering Engine** | Latent topic discovery via probabilistic modeling |
-| **Semantic Cache** | Query-level caching optimized using cluster routing |
-
----
+------------------------------------------------------------------------
 
 # Dataset
 
-The system operates on the **20 Newsgroups dataset (~20,000 documents)**.
+The system operates on the 20 Newsgroups dataset (\~20,000 documents).
 
-To ensure **true semantic modeling**, the dataset was preprocessed by removing:
+To ensure clean semantic signals, preprocessing removed:
 
-- Email headers
-- Footers
-- Quoted reply chains
+-   Email headers
+-   Footers
+-   Quoted reply chains
 
-This prevents **target leakage** and isolates the **core semantic content** of each document.
+This prevents target leakage and isolates the raw semantic content of
+each document.
 
----
+------------------------------------------------------------------------
 
 # Component 1: Vector Engine
 
-## Embedding Model
+Embedding model: all-MiniLM-L6-v2 from SentenceTransformers.
 
-The system uses:
+Properties:
 
-```
+Embedding dimension: 384\
+Model size: \~80MB\
+Inference: CPU optimized\
+Latency: \~2--4ms per query
 
-all-MiniLM-L6-v2
-
-```
-
-from the `SentenceTransformers` library.
-
-Reasons for this choice:
-
-| Property | Value |
-|------|------|
-| Embedding dimension | 384 |
-| Model size | ~80MB |
-| Inference | CPU optimized |
-| Latency | ~2–4 ms per query |
-
-This model provides **strong semantic quality while maintaining extremely fast CPU inference**, making it suitable for **low-latency API systems**.
-
----
+This model offers strong semantic quality with extremely fast CPU
+inference.
 
 ## Vector Index
 
-Document embeddings are indexed using **FAISS (`faiss-cpu`)**.
-
-```
-
-IndexFlatIP
-
-```
-
-### Why Inner Product?
+The FAISS index used is IndexFlatIP.
 
 Cosine similarity can be rewritten as:
 
-```
+cos(A,B) = (A·B) / (\|\|A\|\| \|\|B\|\|)
 
-cos(A, B) = (A · B) / (||A|| ||B||)
+By L2 normalizing vectors before indexing, cosine similarity becomes an
+inner product search.
 
-```
+This enables exact cosine similarity retrieval using FAISS's optimized
+inner‑product kernels.
 
-By **L2-normalizing vectors before ingestion**, cosine similarity reduces to **pure inner product**.
+Complexity:
 
-This allows:
+Index Build: O(Nd)\
+Query Search: O(Nd)\
+Memory: O(Nd)
 
-- **Exact cosine similarity search**
-- Using FAISS's **highly optimized inner product kernels**
+Where
 
----
-
-### Index Complexity
-
-| Operation | Complexity |
-|------|------|
-| Index build | O(Nd) |
-| Query search | O(Nd) |
-| Memory | O(Nd) |
-
-Where:
-
-```
-
-N = number of documents (~20k)
+N = number of documents (\~20k)\
 d = embedding dimension (384)
 
-```
+At this scale, brute‑force search outperforms approximate nearest
+neighbor methods due to SIMD vectorization.
 
-At this scale, **brute-force exact search is faster than approximate indexes** due to FAISS vectorization.
-
----
+------------------------------------------------------------------------
 
 # Component 2: Fuzzy Semantic Clustering
 
-A central design challenge is that **semantic topics overlap**.
+Real‑world documents often belong to multiple topics.
 
 Example:
 
-```
-
-"Gun control policy debate"
-
-```
+"Gun control debate"
 
 belongs simultaneously to:
 
-- Politics
-- Firearms
-- Law
+-   Politics
+-   Firearms
+-   Law
 
-Traditional clustering (K-Means) produces **hard assignments**, which fails to capture this overlap.
-
----
+Hard clustering like K‑Means cannot model this overlap effectively.
 
 ## Dimensionality Reduction
 
-The original embeddings are:
+Original embeddings: 384D
 
-```
+To mitigate the curse of dimensionality:
 
-384 dimensions
-
-```
-
-High-dimensional clustering suffers from the **curse of dimensionality**, which destabilizes covariance estimation.
-
-To mitigate this:
-
-```
-
-PCA → 384D → 50D
-
-```
+PCA reduces embeddings to 50D.
 
 Benefits:
 
-- Removes noise
-- Stabilizes covariance matrices
-- Improves clustering convergence
-
----
+-   Removes noise
+-   Stabilizes covariance estimation
+-   Improves clustering convergence
 
 ## Gaussian Mixture Model
 
-Clustering is performed using a **Gaussian Mixture Model (GMM)**.
+Clustering uses a Gaussian Mixture Model (GMM).
 
-Instead of hard assignments:
+Instead of hard assignments, GMM produces probability distributions:
 
-```
-
-Document → single cluster
-
-```
-
-GMM produces **probabilistic assignments**:
-
-```
-
-Document → P(cluster_1), P(cluster_2), ... P(cluster_k)
-
-```
+Document → P(cluster1), P(cluster2), ...
 
 Example:
 
-```
-
-doc_134:
-Politics: 0.62
-Firearms: 0.28
+Politics: 0.62\
+Firearms: 0.28\
 Law: 0.08
-Hardware: 0.02
 
-```
+These soft assignments allow more accurate routing in the semantic
+cache.
 
-This probabilistic representation enables **cluster-aware routing in the semantic cache**.
+## Cluster Count
 
----
-
-## Choice of Cluster Count
-
-Although the dataset contains **20 labeled categories**, the model uses:
-
-```
+Although the dataset contains 20 labeled categories, the system uses:
 
 K = 15 clusters
 
-```
+because several categories overlap semantically (e.g., Mac vs IBM
+hardware).
 
-Reason:
+Reducing cluster count produces cleaner latent structures.
 
-Empirical inspection revealed that several categories have **semantic overlap**, including:
-
-- Mac vs IBM hardware
-- Politics vs Firearms
-- Religion vs Philosophy
-
-Reducing to **15 clusters creates a cleaner latent representation**.
-
----
+------------------------------------------------------------------------
 
 # Component 3: Cluster-Aware Semantic Cache
 
-The system implements a **custom semantic cache from scratch**, without Redis or Memcached.
+A custom semantic cache was implemented from scratch.
 
-Each cache entry stores:
+Each entry stores:
 
-```
-
-{
-query,
-embedding,
-cluster_distribution,
-result
-}
-
-```
-
----
+-   query
+-   embedding
+-   cluster distribution
+-   result
 
 ## Cache Structure
 
-The cache is organized into **cluster buckets**:
+Cache buckets are grouped by dominant cluster:
 
-```
-
-cache = {
-cluster_0: [entry, entry],
-cluster_1: [entry],
-cluster_2: [],
-...
-}
-
-```
-
-Each query is assigned a **dominant cluster**.
-
----
+cache = { cluster_0: \[entries\], cluster_1: \[entries\], ... }
 
 ## Routing Algorithm
 
-Instead of scanning the entire cache:
+Instead of scanning the entire cache O(N):
 
-```
+1.  Compute query cluster probabilities
+2.  Select clusters where probability \> 0.1
+3.  Search only those cache buckets
 
-O(N)
-
-```
-
-the system performs **cluster-aware routing**.
-
-### Step 1 — Infer cluster probabilities
-
-```
-
-P(cluster_i | query)
-
-```
-
-### Step 2 — Select relevant clusters
-
-Only clusters where:
-
-```
-
-P(cluster) > 0.1
-
-```
-
-are scanned.
-
-### Step 3 — Perform cosine similarity search
-
-Only within those buckets.
-
----
-
-## Complexity Reduction
-
-If:
-
-```
-
-N = total cache entries
-K = clusters
-
-```
-
-Expected lookup complexity becomes approximately:
-
-```
+This reduces expected lookup complexity to approximately:
 
 O(N / K)
 
-```
-
-For K=15, this results in **~15x reduction in scan space**.
-
----
+With K = 15 clusters, the search space is reduced roughly 15×.
 
 ## Similarity Threshold
 
-The cache uses a **cosine similarity boundary**:
+Cosine similarity threshold:
 
-```
+0.88
 
-threshold = 0.88
+Empirical observations:
 
-```
+> 0.95 → behaves like exact‑match cache\
+> 0.88 → captures paraphrased intent\
+> \<0.80 → starts matching unrelated topics
 
-This value was chosen empirically.
+Thus 0.88 provides a safe semantic boundary.
 
-| Threshold | Behavior |
-|------|------|
-| >0.95 | Degenerates to exact-match cache |
-| 0.88 | Captures paraphrased intent |
-| <0.80 | Begins matching unrelated topics |
-
-Examples of incorrect matches at low thresholds:
-
-```
-
-"installing Windows"
-≈
-"installing Linux"
-
-````
-
-Thus **0.88 acts as a safe semantic boundary**.
-
----
+------------------------------------------------------------------------
 
 # API Endpoints
 
-## POST `/query`
+## POST /query
 
-Execute a semantic search query with cache lookup.
+Request:
 
-### Request
+{ "query": "How do I install Linux on a new PC?" }
 
-```json
-{
-  "query": "How do I install Linux on a new PC?"
-}
-````
+Response:
 
----
+{ "query": "...", "cache_hit": true, "matched_query": "...",
+"similarity_score": 0.91, "result": "...", "dominant_cluster": 4 }
 
-### Response
+## GET /cache/stats
 
-```json
-{
-  "query": "How do I install Linux on a new PC?",
-  "cache_hit": true,
-  "matched_query": "Steps to install Linux on a computer",
-  "similarity_score": 0.913,
-  "result": "Install Linux by creating a bootable USB...",
-  "dominant_cluster": 4
-}
-```
+Response:
 
----
+{ "total_entries": 128, "hit_count": 87, "miss_count": 41, "hit_rate":
+0.67 }
 
-## GET `/cache/stats`
+## DELETE /cache
 
-Returns cache statistics.
+Flushes the semantic cache.
 
-### Response
-
-```json
-{
-  "total_entries": 128,
-  "hit_count": 87,
-  "miss_count": 41,
-  "hit_rate": 0.679
-}
-```
-
----
-
-## DELETE `/cache`
-
-Flushes all cached entries.
-
----
+------------------------------------------------------------------------
 
 # Bootstrapping and Model Lifecycle
 
-The system uses **FastAPI's lifespan manager** to handle model initialization.
+The application uses FastAPI's lifespan manager.
 
-On the **first server boot**, the system performs:
+First startup performs:
 
-1. Dataset loading
-2. Embedding generation for all documents
-3. PCA model training
-4. GMM clustering
-5. FAISS index creation
+1.  Dataset loading
+2.  Embedding generation
+3.  PCA training
+4.  GMM clustering
+5.  FAISS index creation
 
 Artifacts are saved to:
 
-```
 .artifacts/
-```
 
-Stored objects include:
+Stored files include:
 
-```
-embeddings.npy
-pca.pkl
-gmm.pkl
+embeddings.npy\
+pca.pkl\
+gmm.pkl\
 faiss.index
-```
 
-Subsequent server restarts **reuse the artifacts**, reducing startup time to:
+Subsequent server restarts load these artifacts and start in \<1 second.
 
-```
-< 1 second
-```
-
----
+------------------------------------------------------------------------
 
 # Running Locally
 
-## Setup
+Setup:
 
-```bash
-git clone <repo>
-cd semantic-cache-api
+python -m venv venv source venv/bin/activate pip install -r
+requirements.txt
 
-python -m venv venv
-source venv/bin/activate   # Linux/Mac
-venv\Scripts\activate      # Windows
+Run server:
 
-pip install -r requirements.txt
-```
-
----
-
-## Start the API
-
-```bash
 uvicorn main:app --reload
-```
 
-Server runs at:
+API available at:
 
-```
 http://localhost:8000
-```
 
-Interactive API documentation:
+Interactive docs:
 
-```
 http://localhost:8000/docs
-```
 
----
+------------------------------------------------------------------------
 
 # Running with Docker
 
-The repository includes a **Docker + docker-compose setup**.
+Start the system:
 
-Artifacts are persisted via a **mounted volume** so models are only built once.
-
----
-
-## Start the system
-
-```bash
 docker-compose up --build
-```
 
-Volume mapping:
+The .artifacts directory is mounted as a volume to persist models across
+container restarts.
 
-```
-.artifacts/ → container:/app/.artifacts
-```
-
-This ensures:
-
-* embeddings
-* FAISS index
-* PCA
-* GMM models
-
-persist across container restarts.
-
----
+------------------------------------------------------------------------
 
 # Performance Characteristics
 
-| Metric              | Value             |
-| ------------------- | ----------------- |
-| Corpus size         | ~20,000 documents |
-| Embedding dimension | 384               |
-| PCA dimension       | 50                |
-| Clusters            | 15                |
-| Cache lookup        | ~O(N/K)           |
-| Query latency       | ~10–30 ms         |
+Corpus size: \~20,000 documents\
+Embedding dimension: 384\
+PCA dimension: 50\
+Clusters: 15\
+Cache lookup complexity: \~O(N/K)\
+Query latency: \~10--30 ms
 
----
+------------------------------------------------------------------------
 
-# Key Design Decisions
+# Design Philosophy
 
-### Why FAISS Flat Index?
+The system explores intent‑aware caching.
 
-At **20k vectors**, approximate indexes add unnecessary overhead.
+Traditional caches rely on exact keys, while semantic caching allows
+queries like:
 
-Flat indexes leverage:
-
-* SIMD vectorization
-* optimized BLAS kernels
-
-which outperform ANN structures at this scale.
-
----
-
-### Why Probabilistic Clustering?
-
-Soft clustering allows:
-
-```
-multi-topic documents
-```
-
-which is common in natural language corpora.
-
-This improves **cache routing accuracy**.
-
----
-
-### Why Build Cache from Scratch?
-
-External caches:
-
-* Redis
-* Memcached
-
-operate on **exact keys**, not **semantic intent**.
-
-This project explores **intent-aware caching**, where queries like:
-
-```
-"How to install Linux?"
+"How to install Linux?"\
 "Steps to install Ubuntu?"
-```
 
-can share the same cached response.
+to reuse the same cached result.
 
----
+This demonstrates how vector search systems can integrate with
+intelligent caching strategies to build efficient semantic
+infrastructure.
 
-# Future Improvements
+------------------------------------------------------------------------
 
-Potential extensions include:
+# License
 
-* Hierarchical clustering
-* Approximate FAISS indexes (HNSW, IVF)
-* TTL-based cache eviction
-* LRU cluster-aware eviction
-* GPU embedding inference
-* Distributed cache nodes
-
-
-```
-```
+MIT
